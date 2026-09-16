@@ -10,7 +10,7 @@ import edge_tts
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # বট টোকেন (এনভায়রনমেন্ট ভেরিয়েবল থেকে নেওয়া ভালো)
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8952937185:AAF0qjCMokwh43ag7PE0er409ATwpOzOwf0")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """স্টার্ট কমান্ড হ্যান্ডলার"""
