@@ -1,6 +1,8 @@
 import os
 import asyncio
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from moviepy.editor import VideoFileClip, concatenate_videoclips, AudioFileClip
@@ -9,8 +11,27 @@ import edge_tts
 # লগিং সেটআপ
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# বট টোকেন (এনভায়রনমেন্ট ভেরিয়েবল থেকে নেওয়া ভালো)
+# বট টোকেন
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8952937185:AAF0qjCMokwh43ag7PE0er409ATwpOzOwf0")
+
+# ==================== Render Web Service-এর জন্য ফেক হেলথ-চেক সার্ভার ====================
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and running on Render Web Service!")
+
+    def log_message(self, format, *args):
+        # সার্ভার লগ বন্ধ রাখার জন্য
+        return
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    logging.info(f"Fake Web Server running on port {port}")
+    server.serve_forever()
+# =========================================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """স্টার্ট কমান্ড হ্যান্ডলার"""
@@ -23,30 +44,22 @@ async def generate_voiceover(text: str, output_audio_path: str, voice: str = "bn
 
 def process_video_pipeline(input_path: str, output_path: str, audio_path: str, clip_duration: int = 4):
     """ভিডিও কাটা, প্রসেস করা এবং অডিও জোড়া লাগানোর কাজ"""
-    # ১. ভিডিও লোড করা
     video = VideoFileClip(input_path)
     
-    # ২. ৩-৪ সেকেন্ডের ছোট টুকরোতে ভাগ করা
     clips = []
     duration = int(video.duration)
     for i in range(0, duration, clip_duration):
         subclip = video.subclip(i, min(i + clip_duration, duration))
-        # [ভবিষ্যতে এআই মডেলের এডিটিং লজিক এই সাবক্লিপে যুক্ত করতে পারবেন]
         clips.append(subclip)
     
-    # ৩. সব ক্লিপ আবার একসাথে জোড়া লাগানো
     final_video = concatenate_videoclips(clips)
     
-    # ৪. তৈরি করা নতুন অডিও/ভয়েসওভার যুক্ত করা
     if os.path.exists(audio_path):
         audio = AudioFileClip(audio_path)
-        # অডিও অনুযায়ী ভিডিওর সাউন্ড রিপ্লেস করা
         final_video = final_video.set_audio(audio)
         
-    # ৫. ফাইনাল ভিডিও ফাইল আউটপুট দেওয়া
     final_video.write_videofile(output_path, codec="libx264", audio_codec="aac")
     
-    # মেমোরি ক্লিয়ার করা
     video.close()
     final_video.close()
 
@@ -59,19 +72,15 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     audio_path = "temp_voiceover.mp3"
     
     try:
-        # ১. টেলিগ্রাম থেকে ভিডিও ডাউনলোড
         video_file = await update.message.video.get_file()
         await video_file.download_to_drive(input_video_path)
         
-        # ২. ভয়েসওভারের জন্য টেক্সট দিয়ে এআই ভয়েস বানানো
         script = "আপনার পাঠানো ভিডিওটি সফলভাবে প্রসেস করা হয়েছে।"
         await generate_voiceover(script, audio_path, voice="bn-BD-NabanitaNeural")
         
-        # ৩. ব্যাকগ্রাউন্ডে ভিডিও কাটিং ও জোড়া লাগানোর ভারী কাজ চালানো
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, process_video_pipeline, input_video_path, output_video_path, audio_path, 4)
         
-        # ৪. প্রসেস করা নতুন ভিডিও ইউজারের কাছে পাঠানো
         await update.message.reply_video(
             video=open(output_video_path, 'rb'),
             caption="আপনার প্রসেস করা ভিডিও রেডি!"
@@ -81,12 +90,15 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"একটি সমস্যা হয়েছে: {str(e)}")
         
     finally:
-        # সাময়িক তৈরি হওয়া ফাইলগুলো মুছে ফেলা
         for file_path in [input_video_path, output_video_path, audio_path]:
             if os.path.exists(file_path):
                 os.remove(file_path)
 
 if __name__ == '__main__':
+    # ১. ব্যাকগ্রাউন্ড থ্রেডে ডামি ওয়েব সার্ভার চালু করা
+    threading.Thread(target=run_web_server, daemon=True).start()
+
+    # ২. টেলিগ্রাম বট স্টার্ট করা
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.VIDEO, handle_video))
